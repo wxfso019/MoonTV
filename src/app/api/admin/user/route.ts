@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any,no-console,@typescript-eslint/no-non-null-assertion */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
+import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
-import { getStorage, IStorage } from '@/lib/db';
+import { getStorage } from '@/lib/db';
+import { IStorage } from '@/lib/types';
 
 export const runtime = 'edge';
 
@@ -15,9 +17,11 @@ const ACTIONS = [
   'setAdmin',
   'cancelAdmin',
   'setAllowRegister',
+  'changePassword',
+  'deleteUser',
 ] as const;
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
   if (storageType === 'localstorage') {
     return NextResponse.json(
@@ -31,23 +35,25 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
+    const authInfo = getAuthInfoFromCookie(request);
+    if (!authInfo || !authInfo.username) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const username = authInfo.username;
+
     const {
-      username, // 操作者用户名
-      password, // 操作者密码
       targetUsername, // 目标用户名
       targetPassword, // 目标用户密码（仅在添加用户时需要）
       allowRegister,
       action,
     } = body as {
-      username?: string;
-      password?: string;
       targetUsername?: string;
       targetPassword?: string;
       allowRegister?: boolean;
       action?: (typeof ACTIONS)[number];
     };
 
-    if (!username || !password || !action || !ACTIONS.includes(action)) {
+    if (!action || !ACTIONS.includes(action)) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
 
@@ -55,7 +61,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '缺少目标用户名' }, { status: 400 });
     }
 
-    if (action !== 'setAllowRegister' && username === targetUsername) {
+    if (
+      action !== 'setAllowRegister' &&
+      action !== 'changePassword' &&
+      action !== 'deleteUser' &&
+      username === targetUsername
+    ) {
       return NextResponse.json(
         { error: '无法对自己进行此操作' },
         { status: 400 }
@@ -63,19 +74,13 @@ export async function POST(request: Request) {
     }
 
     // 获取配置与存储
-    const adminConfig = getConfig();
+    const adminConfig = await getConfig();
     const storage: IStorage | null = getStorage();
 
     // 判定操作者角色
     let operatorRole: 'owner' | 'admin';
     if (username === process.env.USERNAME) {
       operatorRole = 'owner';
-      if (password !== process.env.PASSWORD) {
-        return NextResponse.json(
-          { error: '用户名或密码错误' },
-          { status: 401 }
-        );
-      }
     } else {
       const userEntry = adminConfig.UserConfig.Users.find(
         (u) => u.username === username
@@ -84,20 +89,6 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: '权限不足' }, { status: 401 });
       }
       operatorRole = 'admin';
-
-      if (!storage || typeof storage.verifyUser !== 'function') {
-        return NextResponse.json(
-          { error: '存储未配置用户认证' },
-          { status: 500 }
-        );
-      }
-      const ok = await storage.verifyUser(username, password);
-      if (!ok) {
-        return NextResponse.json(
-          { error: '用户名或密码错误' },
-          { status: 401 }
-        );
-      }
     }
 
     // 查找目标用户条目
@@ -105,7 +96,11 @@ export async function POST(request: Request) {
       (u) => u.username === targetUsername
     );
 
-    if (targetEntry && targetEntry.role === 'owner') {
+    if (
+      targetEntry &&
+      targetEntry.role === 'owner' &&
+      action !== 'changePassword'
+    ) {
       return NextResponse.json({ error: '无法操作站长' }, { status: 400 });
     }
 
@@ -227,6 +222,88 @@ export async function POST(request: Request) {
             );
           }
           targetEntry.role = 'user';
+          break;
+        }
+        case 'changePassword': {
+          if (!targetEntry) {
+            return NextResponse.json(
+              { error: '目标用户不存在' },
+              { status: 404 }
+            );
+          }
+          if (!targetPassword) {
+            return NextResponse.json({ error: '缺少新密码' }, { status: 400 });
+          }
+
+          // 权限检查：不允许修改站长密码
+          if (targetEntry.role === 'owner') {
+            return NextResponse.json(
+              { error: '无法修改站长密码' },
+              { status: 401 }
+            );
+          }
+
+          if (
+            isTargetAdmin &&
+            operatorRole !== 'owner' &&
+            username !== targetUsername
+          ) {
+            return NextResponse.json(
+              { error: '仅站长可修改其他管理员密码' },
+              { status: 401 }
+            );
+          }
+
+          if (!storage || typeof storage.changePassword !== 'function') {
+            return NextResponse.json(
+              { error: '存储未配置密码修改功能' },
+              { status: 500 }
+            );
+          }
+
+          await storage.changePassword(targetUsername!, targetPassword);
+          break;
+        }
+        case 'deleteUser': {
+          if (!targetEntry) {
+            return NextResponse.json(
+              { error: '目标用户不存在' },
+              { status: 404 }
+            );
+          }
+
+          // 权限检查：站长可删除所有用户（除了自己），管理员可删除普通用户
+          if (username === targetUsername) {
+            return NextResponse.json(
+              { error: '不能删除自己' },
+              { status: 400 }
+            );
+          }
+
+          if (isTargetAdmin && operatorRole !== 'owner') {
+            return NextResponse.json(
+              { error: '仅站长可删除管理员' },
+              { status: 401 }
+            );
+          }
+
+          if (!storage || typeof storage.deleteUser !== 'function') {
+            return NextResponse.json(
+              { error: '存储未配置用户删除功能' },
+              { status: 500 }
+            );
+          }
+
+          await storage.deleteUser(targetUsername!);
+
+          // 从配置中移除用户
+          const userIndex = adminConfig.UserConfig.Users.findIndex(
+            (u) => u.username === targetUsername
+          );
+          if (userIndex > -1) {
+            adminConfig.UserConfig.Users.splice(userIndex, 1);
+          }
+
           break;
         }
         default:

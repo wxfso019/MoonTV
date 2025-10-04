@@ -19,19 +19,21 @@ export async function GET(request: Request) {
   }
 
   try {
-    const apiSites = getAvailableApiSites();
+    const apiSites = await getAvailableApiSites();
     const apiSite = apiSites.find((site) => site.key === sourceCode);
 
     if (!apiSite) {
       return NextResponse.json({ error: '无效的API来源' }, { status: 400 });
     }
 
-    const result = await getDetailFromApi(apiSite, sourceCode);
-    const cacheTime = getCacheTime();
+    const result = await getDetailFromApi(apiSite, id);
+    const cacheTime = await getCacheTime();
 
     return NextResponse.json(result, {
       headers: {
-        'Cache-Control': `public, max-age=${cacheTime}`,
+        'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
+        'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
+        'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
       },
     });
   } catch (error) {

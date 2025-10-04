@@ -2,7 +2,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { db, Favorite } from '@/lib/db';
+import { getAuthInfoFromCookie } from '@/lib/auth';
+import { db } from '@/lib/db';
+import { Favorite } from '@/lib/types';
 
 export const runtime = 'edge';
 
@@ -15,13 +17,14 @@ export const runtime = 'edge';
  */
 export async function GET(request: NextRequest) {
   try {
+    // 从 cookie 获取用户信息
+    const authInfo = getAuthInfoFromCookie(request);
+    if (!authInfo || !authInfo.username) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const key = searchParams.get('key');
-    const user = searchParams.get('user');
-
-    if (!user) {
-      return NextResponse.json({ error: 'Missing user' }, { status: 400 });
-    }
 
     // 查询单条收藏
     if (key) {
@@ -32,12 +35,12 @@ export async function GET(request: NextRequest) {
           { status: 400 }
         );
       }
-      const fav = await db.getFavorite(user, source, id);
+      const fav = await db.getFavorite(authInfo.username, source, id);
       return NextResponse.json(fav, { status: 200 });
     }
 
     // 查询全部收藏
-    const favorites = await db.getAllFavorites(user);
+    const favorites = await db.getAllFavorites(authInfo.username);
     return NextResponse.json(favorites, { status: 200 });
   } catch (err) {
     console.error('获取收藏失败', err);
@@ -50,20 +53,18 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/favorites
- * body: { user?: string; key: string; favorite: Favorite }
+ * body: { key: string; favorite: Favorite }
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const {
-      user,
-      key,
-      favorite,
-    }: { user?: string; key: string; favorite: Favorite } = body;
-
-    if (!user) {
-      return NextResponse.json({ error: 'Missing user' }, { status: 400 });
+    // 从 cookie 获取用户信息
+    const authInfo = getAuthInfoFromCookie(request);
+    if (!authInfo || !authInfo.username) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const body = await request.json();
+    const { key, favorite }: { key: string; favorite: Favorite } = body;
 
     if (!key || !favorite) {
       return NextResponse.json(
@@ -88,12 +89,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const favoriteWithoutUserId = {
+    const finalFavorite = {
       ...favorite,
       save_time: favorite.save_time ?? Date.now(),
-    } as Omit<Favorite, 'user_id'>;
+    } as Favorite;
 
-    await db.saveFavorite(user, source, id, favoriteWithoutUserId);
+    await db.saveFavorite(authInfo.username, source, id, finalFavorite);
 
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (err) {
@@ -113,13 +114,15 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
+    // 从 cookie 获取用户信息
+    const authInfo = getAuthInfoFromCookie(request);
+    if (!authInfo || !authInfo.username) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const username = authInfo.username;
     const { searchParams } = new URL(request.url);
     const key = searchParams.get('key');
-    const user = searchParams.get('user');
-
-    if (!user) {
-      return NextResponse.json({ error: 'Missing user' }, { status: 400 });
-    }
 
     if (key) {
       // 删除单条
@@ -130,14 +133,14 @@ export async function DELETE(request: NextRequest) {
           { status: 400 }
         );
       }
-      await db.deleteFavorite(user, source, id);
+      await db.deleteFavorite(username, source, id);
     } else {
       // 清空全部
-      const all = await db.getAllFavorites(user);
+      const all = await db.getAllFavorites(username);
       await Promise.all(
         Object.keys(all).map(async (k) => {
           const [s, i] = k.split('+');
-          if (s && i) await db.deleteFavorite(user, s, i);
+          if (s && i) await db.deleteFavorite(username, s, i);
         })
       );
     }

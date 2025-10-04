@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 
-import { getAvailableApiSites, getCacheTime } from '@/lib/config';
+import { getCacheTime, getConfig } from '@/lib/config';
 import { searchFromApi } from '@/lib/downstream';
+import { yellowWords } from '@/lib/yellow';
 
 export const runtime = 'edge';
 
@@ -10,30 +11,41 @@ export async function GET(request: Request) {
   const query = searchParams.get('q');
 
   if (!query) {
-    const cacheTime = getCacheTime();
+    const cacheTime = await getCacheTime();
     return NextResponse.json(
       { results: [] },
       {
         headers: {
-          'Cache-Control': `public, max-age=${cacheTime}`,
+          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
+          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
+          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
         },
       }
     );
   }
 
-  const apiSites = getAvailableApiSites();
+  const config = await getConfig();
+  const apiSites = config.SourceConfig.filter((site) => !site.disabled);
   const searchPromises = apiSites.map((site) => searchFromApi(site, query));
 
   try {
     const results = await Promise.all(searchPromises);
-    const flattenedResults = results.flat();
-    const cacheTime = getCacheTime();
+    let flattenedResults = results.flat();
+    if (!config.SiteConfig.DisableYellowFilter) {
+      flattenedResults = flattenedResults.filter((result) => {
+        const typeName = result.type_name || '';
+        return !yellowWords.some((word: string) => typeName.includes(word));
+      });
+    }
+    const cacheTime = await getCacheTime();
 
     return NextResponse.json(
       { results: flattenedResults },
       {
         headers: {
-          'Cache-Control': `public, max-age=${cacheTime}`,
+          'Cache-Control': `public, max-age=${cacheTime}, s-maxage=${cacheTime}`,
+          'CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
+          'Vercel-CDN-Cache-Control': `public, s-maxage=${cacheTime}`,
         },
       }
     );

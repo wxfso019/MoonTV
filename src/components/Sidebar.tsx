@@ -1,19 +1,8 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 'use client';
 
-import {
-  Clover,
-  Film,
-  Github,
-  Home,
-  Menu,
-  MessageCircleHeart,
-  MountainSnow,
-  Search,
-  Star,
-  Swords,
-  Tv,
-  VenetianMask,
-} from 'lucide-react';
+import { Clover, Film, Home, Menu, Search, Star, Tv } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -135,45 +124,37 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
     isCollapsed,
   };
 
-  const menuItems = [
+  const [menuItems, setMenuItems] = useState([
     {
       icon: Film,
-      label: '热门电影',
-      href: '/douban?type=movie&tag=热门&title=热门电影',
+      label: '电影',
+      href: '/douban?type=movie',
     },
     {
       icon: Tv,
-      label: '热门剧集',
-      href: '/douban?type=tv&tag=热门&title=热门剧集',
-    },
-    {
-      icon: Star,
-      label: '豆瓣 Top250',
-      href: '/douban?type=movie&tag=top250&title=豆瓣 Top250',
+      label: '剧集',
+      href: '/douban?type=tv',
     },
     {
       icon: Clover,
       label: '综艺',
-      href: '/douban?type=tv&tag=综艺&title=综艺',
+      href: '/douban?type=show',
     },
-    { icon: Swords, label: '美剧', href: '/douban?type=tv&tag=美剧' },
-    {
-      icon: MessageCircleHeart,
-      label: '韩剧',
-      href: '/douban?type=tv&tag=韩剧',
-    },
-    { icon: MountainSnow, label: '日剧', href: '/douban?type=tv&tag=日剧' },
-    { icon: VenetianMask, label: '日漫', href: '/douban?type=tv&tag=日本动画' },
-  ];
+  ]);
 
-  const { siteName } = useSite();
-  if (siteName !== 'MoonTV') {
-    menuItems.push({
-      icon: Github,
-      label: 'MoonTV',
-      href: 'https://github.com/senshinya/MoonTV',
-    });
-  }
+  useEffect(() => {
+    const runtimeConfig = (window as any).RUNTIME_CONFIG;
+    if (runtimeConfig?.CUSTOM_CATEGORIES?.length > 0) {
+      setMenuItems((prevItems) => [
+        ...prevItems,
+        {
+          icon: Star,
+          label: '自定义',
+          href: '/douban?type=custom',
+        },
+      ]);
+    }
+  }, []);
 
   return (
     <SidebarContext.Provider value={contextValue}>
@@ -259,7 +240,6 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                 {menuItems.map((item) => {
                   // 检查当前路径是否匹配这个菜单项
                   const typeMatch = item.href.match(/type=([^&]+)/)?.[1];
-                  const tagMatch = item.href.match(/tag=([^&]+)/)?.[1];
 
                   // 解码URL以进行正确的比较
                   const decodedActive = decodeURIComponent(active);
@@ -268,9 +248,7 @@ const Sidebar = ({ onToggle, activePath = '/' }: SidebarProps) => {
                   const isActive =
                     decodedActive === decodedItemHref ||
                     (decodedActive.startsWith('/douban') &&
-                      decodedActive.includes(`type=${typeMatch}`) &&
-                      tagMatch &&
-                      decodedActive.includes(`tag=${tagMatch}`));
+                      decodedActive.includes(`type=${typeMatch}`));
                   const Icon = item.icon;
                   return (
                     <Link
